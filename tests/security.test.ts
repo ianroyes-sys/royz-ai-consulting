@@ -1,0 +1,104 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHmac} from 'node:crypto';
+const folder=mkdtempSync(join(tmpdir(),'royz-security-'));
+process.env.TURSO_DATABASE_URL=`file:${folder}/test.db`;
+process.env.AUTH_SECRET='security-test-only-secret-at-least-32-characters';
+process.env.ADMIN_PASSWORD='test-password-at-least-16';
+process.env.APP_URL='http://localhost:3091';
+process.env.STRIPE_SECRET_KEY='sk_test_fake_not_a_real_key';
+import * as security from '../src/lib/security';
+import * as db from '../src/lib/db';
+import * as billing from '../src/lib/billing';
+import * as assess from '../src/app/api/assessments/route';
+import * as client from '../src/app/api/client/route';
+import * as checkout from '../src/app/api/checkout/route';
+function request(path:string,data:unknown,origin='http://localhost:3091'){
+ return new Request(`http://localhost:3091/api/${path}`,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(data)});
+}
+test.after(()=>{db.db().close();rmSync(folder,{recursive:true,force:true});});
+test('signed sessions reject tampering, expiry, extra segments and weak passwords',()=>{
+ const session=security.signSession();assert.equal(security.verifySession(session),true);
+ assert.equal(security.verifySession(session+'x'),false);assert.equal(security.verifySession(session+'.extra'),false);
+ const expired=Buffer.from(JSON.stringify({exp:Date.now()-1000})).toString('base64url');
+ const sig=createHmac('sha256',process.env.AUTH_SECRET!).update(expired).digest('base64url');
+ assert.equal(security.verifySession(`${expired}.${sig}`),false);
+ assert.equal(security.samePassword('wrong'),false);assert.equal(security.samePassword(process.env.ADMIN_PASSWORD!),true);
+ assert.equal(security.originOK(request('test',{},'https://attacker.example')),false);
+});
+test('assessment, concurrent edits, consent, checkout, billing and private data',async()=>{
+ const input={name:'Test Client',email:'CLIENT@example.com',business:'Example Co',website:'https://example.com',industry:'Services',teamSize:'2-5',painPoint:'admin',hoursPerWeek:12,tools:'Email',details:'We spend too long on repeated appointment admin.',consent:true};
+ assert.equal((await assess.POST(request('assessments',input,'https://attacker.example'))).status,403);
+ assert.equal((await assess.POST(request('assessments',{...input,consent:false}))).status,400);
+ assert.equal((await assess.POST(request('assessments',{...input,website:'javascript:alert(1)'}))).status,400);
+ assert.equal((await assess.POST(request('assessments',{...input,company:'bot'}))).status,400);
+ const response=await assess.POST(request('assessments',input));assert.equal(response.status,201);
+ const created=await response.json();assert.match(created.token,/^[a-f0-9]{64}$/);
+ let a=(await db.getAssessment(created.id))!;assert.equal(a.email,'client@example.com');
+ await Promise.all(Array.from({length:8},(_,i)=>db.mutateAssessment(a.id,current=>{current.notes+=`${i},`;})));
+ a=(await db.getAssessment(a.id))!;assert.equal(new Set(a.notes.split(',').filter(Boolean)).size,8);
+ await db.mutateAssessment(a.id,current=>{current.status='proposed';current.scope='Build a reviewed appointment admin workflow.';});
+ const exposed=await (await client.GET(new Request(`http://localhost:3091/api/client?token=${a.token}`))).json();
+ assert.equal(exposed.assessment.notes,undefined);assert.equal(exposed.proposal.scopeHash,billing.scopeHash(exposed.proposal.scope));
+ assert.equal((await client.GET(new Request('http://localhost:3091/api/client?token=invalid'))).status,404);
+ assert.equal((await checkout.POST(request('checkout',{token:a.token,consent:true,scopeHash:'stale'}))).status,409);
+ const stripe=billing.stripe();const keys:string[]=[];
+ stripe.checkout.sessions.create=(async(_params:unknown,options:{idempotencyKey:string})=>{keys.push(options.idempotencyKey);await new Promise(resolve=>setTimeout(resolve,10));return {id:'cs_example',url:'https://checkout.stripe.com/example',status:'open'};}) as unknown as typeof stripe.checkout.sessions.create;
+ stripe.checkout.sessions.retrieve=(async()=>({id:'cs_example',status:'open',url:'https://checkout.stripe.com/example'})) as unknown as typeof stripe.checkout.sessions.retrieve;
+ const payload={token:a.token,consent:true,scopeHash:exposed.proposal.scopeHash};
+ const results=await Promise.all([checkout.POST(request('checkout',payload)),checkout.POST(request('checkout',payload))]);
+ assert.deepEqual(results.map(r=>r.status),[200,200]);assert.equal(new Set(keys).size,1);
+ a=(await db.getAssessment(a.id))!;assert.equal(a.billing?.acceptedScope,exposed.proposal.scope);assert.ok(a.billing?.consentAt);
+ let status='active';
+ stripe.subscriptions.retrieve=(async()=>({id:'sub_example',metadata:{assessmentId:a.id,product:'royz-ai-consulting',checkoutAttempt:a.billing?.checkoutAttempt},customer:'cus_example',status,cancel_at_period_end:false})) as unknown as typeof stripe.subscriptions.retrieve;
+ const stale={...a};await db.mutateAssessment(a.id,current=>{current.notes='Private owner notes added during provider call';});
+ await billing.syncSubscription(stale,'sub_example');a=(await db.getAssessment(a.id))!;
+ assert.equal(a.status,'active');assert.equal(a.notes,'Private owner notes added during provider call');
+ assert.equal((await checkout.POST(request('checkout',payload))).status,409);
+ status='past_due';await billing.syncSubscription(a,'sub_example');assert.equal((await db.getAssessment(a.id))!.billing?.status,'past_due');
+ status='canceled';await billing.syncSubscription(a,'sub_example');assert.equal((await db.getAssessment(a.id))!.billing?.status,'canceled');
+ await db.mutateAssessment(a.id,current=>{current.billing={status:'pending',checkoutAttempt:'new-attempt'};});
+ await billing.syncSubscription(a,'sub_example');assert.equal((await db.getAssessment(a.id))!.billing?.status,'pending');
+});
+test('webhooks require a valid signature and acknowledge duplicate verified events',async()=>{
+ const webhook=await import('../src/app/api/stripe/webhook/route');
+ process.env.STRIPE_WEBHOOK_SECRET='whsec_local_test_only';
+ const payload=JSON.stringify({id:'evt_local_test',object:'event',type:'checkout.session.completed',data:{object:{metadata:{product:'some-other-product'}}}});
+ const unsigned=new Request('http://localhost:3091/api/stripe/webhook',{method:'POST',body:payload});
+ assert.equal((await webhook.POST(unsigned)).status,400);
+ const signature=billing.stripe().webhooks.generateTestHeaderString({payload,secret:process.env.STRIPE_WEBHOOK_SECRET});
+ const send=(body=payload)=>webhook.POST(new Request('http://localhost:3091/api/stripe/webhook',{method:'POST',headers:{'stripe-signature':signature},body}));
+ assert.equal((await send(payload+' ')).status,400);
+ assert.equal((await send()).status,200);assert.equal((await send()).status,200);
+ const saved=await db.db().execute("SELECT id FROM rmg_ai_events WHERE id='evt_local_test'");assert.equal(saved.rows.length,1);
+});
+test('persistent rate limits stop requests beyond the configured allowance',async()=>{
+ assert.equal(await db.limit('test-only-limit',2,60),true);
+ assert.equal(await db.limit('test-only-limit',2,60),true);
+ assert.equal(await db.limit('test-only-limit',2,60),false);
+});
+test('abandoning unpaid checkout expires the provider session and archives consent before unlocking',async()=>{
+ const created=await (await assess.POST(request('assessments',{name:'Second Client',email:'second@example.com',business:'Second Co',website:'',industry:'Services',teamSize:'1',painPoint:'admin',hoursPerWeek:5,details:'Repeated administration work needs help.',consent:true}))).json();
+ const id=created.id;
+ const original={status:'pending',checkoutAttempt:'abandon-attempt',acceptedScope:'Original agreed scope',scopeHash:billing.scopeHash('Original agreed scope'),consentAt:new Date().toISOString(),termsVersion:'2026-09-17'};
+ await db.mutateAssessment(id,a=>{a.scope=original.acceptedScope;a.status='proposed';a.billing={...original};});
+ const stripe=billing.stripe();let recovered=false;let expired=false;
+ stripe.checkout.sessions.create=(async(_params:unknown,options:{idempotencyKey:string})=>{assert.equal(options.idempotencyKey,`rmg-ai-${id}-abandon-attempt`);recovered=true;return {id:'cs_abandon',status:'open',url:'https://checkout.stripe.com/example'};}) as unknown as typeof stripe.checkout.sessions.create;
+ stripe.checkout.sessions.expire=(async(sessionId:string)=>{assert.equal(sessionId,'cs_abandon');assert.equal((await db.getAssessment(id))!.billing?.status,'abandoning');expired=true;return {id:sessionId,status:'expired'};}) as unknown as typeof stripe.checkout.sessions.expire;
+ const result=await billing.abandonCheckout(id);
+ assert.ok(recovered);assert.ok(expired);assert.equal(result.billing,undefined);assert.equal(result.consentHistory?.[0].scope,original.acceptedScope);assert.equal(result.consentHistory?.[0].checkoutId,'cs_abandon');
+ // A lost provider response must keep the scope locked until a later retry.
+ await db.mutateAssessment(id,a=>{a.billing={...original};});
+ stripe.checkout.sessions.expire=(async()=>{throw new Error('Temporary network failure');}) as unknown as typeof stripe.checkout.sessions.expire;
+ await assert.rejects(()=>billing.abandonCheckout(id),/Temporary network failure/);
+ assert.equal((await db.getAssessment(id))!.billing?.status,'abandoning');
+ assert.equal((await checkout.POST(request('checkout',{token:created.token,consent:true,scopeHash:original.scopeHash}))).status,409);
+ // Completed checkouts can never be expired/unlocked by this operation.
+ stripe.checkout.sessions.create=(async()=>({id:'cs_paid',status:'complete',subscription:'sub_paid'})) as unknown as typeof stripe.checkout.sessions.create;
+ stripe.subscriptions.retrieve=(async()=>({id:'sub_paid',metadata:{assessmentId:id,product:'royz-ai-consulting',checkoutAttempt:original.checkoutAttempt},customer:'cus_paid',status:'active',cancel_at_period_end:false})) as unknown as typeof stripe.subscriptions.retrieve;
+ await assert.rejects(()=>billing.abandonCheckout(id),/completed/);
+ const paid=(await db.getAssessment(id))!;assert.equal(paid.billing?.status,'active');assert.equal(paid.scope,original.acceptedScope);
+});

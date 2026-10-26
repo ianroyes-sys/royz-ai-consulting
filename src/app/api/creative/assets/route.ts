@@ -1,0 +1,5 @@
+import {z} from 'zod';
+import {failure,isAdmin,json,originOK,rateLimit} from '@/lib/security';
+import {CreativeAssetError,readBoundedPNG,storeCreativePNG} from '@/lib/creative-assets';
+import {economics,qa} from '@/lib/creative-core';
+export async function POST(req:Request){try{if(!originOK(req)||!await isAdmin())return json({error:'Please sign in.'},401);if(!await rateLimit(req,'creative-assets',60))return json({error:'Please try again later.'},429);const params=new URL(req.url).searchParams;const jobId=z.uuid().safeParse(params.get('jobId'));const concept=Number(params.get('concept'));if(!jobId.success||![1,2,3].includes(concept))return json({error:'Choose a job and concept 1, 2, or 3.'},400);const result=await storeCreativePNG(jobId.data,concept,await readBoundedPNG(req));return json({job:{...result.job,economics:economics(result.job),qa:qa(result.job)},output:result.output},201);}catch(e){if(e instanceof CreativeAssetError)return json({error:e.message},e.status);return failure(e);}}

@@ -1,0 +1,8 @@
+import {randomUUID,randomBytes} from 'node:crypto';
+import {z} from 'zod';
+import {body,failure,json,originOK,rateLimit} from '@/lib/security';
+import {saveAssessment} from '@/lib/db';
+import {makePlan} from '@/lib/planner';
+import type {Assessment} from '@/lib/types';
+const input=z.object({name:z.string().trim().min(2).max(100),email:z.email().max(254),business:z.string().trim().min(2).max(150),website:z.union([z.url().refine(v=>/^https?:\/\//.test(v)),z.literal('')]).optional().default(''),industry:z.string().trim().max(100),teamSize:z.string().max(60),painPoint:z.enum(['lead_followup','quotes','admin']),hoursPerWeek:z.coerce.number().min(0).max(168),tools:z.string().max(1500).default(''),details:z.string().trim().min(10).max(5000),consent:z.literal(true),company:z.string().max(100).optional()});
+export async function POST(req:Request){try{if(!originOK(req))return json({error:'Please submit this form from our website.'},403);if(!await rateLimit(req,'assessment',8))return json({error:'Too many requests. Please try again later.'},429);const v=input.safeParse(await body(req));if(!v.success)return json({error:'Please check your contact details, website URL, description, and consent.'},400);if(v.data.company)return json({error:'Please leave the hidden company field empty.'},400);const {consent,company,...data}=v.data;void consent;void company;const a:Assessment={...data,email:data.email.toLowerCase(),id:randomUUID(),token:randomBytes(32).toString('hex'),createdAt:new Date().toISOString(),status:'new',notes:'',scope:'',plan:makePlan(data)};a.tasks=a.plan.steps.map(title=>({title,done:false}));await saveAssessment(a);return json({id:a.id,token:a.token,plan:a.plan},201);}catch(e){return failure(e);}}

@@ -1,0 +1,5 @@
+import Link from 'next/link';
+import s from './creative.module.css';
+export function Header({studio=false}:{studio?:boolean}){return <header className={s.header}><Link className={s.brand} href="/creative">royz <i>creative.</i></Link><nav className={s.nav} aria-label="Creative navigation">{studio?<><Link href="/creative">Public site</Link><Link href="/creative/demo">Demo</Link><Link href="/studio">Consulting studio</Link></>:<><Link href="/creative#work">The work</Link><Link href="/creative#scope">The sprint</Link><Link className={s.button} href="/creative/start">Start a brief ↗</Link></>}</nav></header>}
+export function Footer(){return <footer className={s.footer}><span>Royz Creative · AI-assisted. Human checked.</span><div><Link href="/creative/privacy">Privacy</Link> · <Link href="/creative/terms">Terms</Link> · <a href="mailto:contact@royzmediagroup.com">Contact</a> · <Link href="/creative/studio">Studio</Link></div></footer>}
+export function Notice({children,error=false}:{children:React.ReactNode;error?:boolean}){return <div role={error?'alert':'status'} className={`${s.notice} ${error?s.error:''}`}>{children}</div>}

@@ -1,0 +1,2 @@
+export async function request<T>(url:string,options?:RequestInit):Promise<T>{const response=await fetch(url,{...options,headers:{'Content-Type':'application/json',...options?.headers}});const data=await response.json();if(!response.ok)throw new Error(data.error||'The request could not be saved. Please try again.');return data as T}
+export function dollars(cents:number){return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(cents/100)}

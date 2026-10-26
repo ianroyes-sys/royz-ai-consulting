@@ -1,0 +1,14 @@
+# Reuse existing app authentication/database/billing settings. Never commit real values.
+APP_URL=https://your-domain.example
+ADMIN_PASSWORD=
+AUTH_SECRET=
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
+# Optional future provider integration; these alone DO NOT activate paid generation.
+HF_API_KEY_ID=
+HF_API_KEY_SECRET=
+# The deployed creative production route stays disabled under the $0 launch budget.
+# OpenAI optional adapter settings documented separately if installed; default is manual_rules.

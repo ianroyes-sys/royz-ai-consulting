@@ -1,0 +1,28 @@
+{
+  "reference": "DEMO-QUOTE-001",
+  "customer": "Example Customer",
+  "currency": "USD",
+  "catalog": [
+    {
+      "sku": "DEMO-A",
+      "description": "Demonstration service A \u2014 replace with approved catalog",
+      "unitPriceCents": 12500
+    },
+    {
+      "sku": "DEMO-B",
+      "description": "Demonstration service B \u2014 replace with approved catalog",
+      "unitPriceCents": 4500
+    }
+  ],
+  "items": [
+    {
+      "sku": "DEMO-A",
+      "quantity": 1
+    },
+    {
+      "sku": "DEMO-B",
+      "quantity": 2
+    }
+  ],
+  "taxBasisPoints": null
+}

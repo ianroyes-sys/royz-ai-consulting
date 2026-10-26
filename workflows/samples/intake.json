@@ -1,0 +1,13 @@
+{
+  "reference": "DEMO-LEAD-001",
+  "name": "Example Customer",
+  "contact": {
+    "email": "customer@example.com"
+  },
+  "service": "Landscape consultation",
+  "location": null,
+  "preferredTime": null,
+  "source": "Sample website inquiry",
+  "notes": "Interested in a consultation. No appointment confirmed.",
+  "owner": "Example office team"
+}

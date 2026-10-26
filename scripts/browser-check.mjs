@@ -1,0 +1,12 @@
+import {chromium} from '@playwright/test';
+import fs from 'node:fs';
+const executablePath=process.env.CHROME_PATH||'';
+const browser=await chromium.launch({headless:true,...(fs.existsSync(executablePath)?{executablePath}:{channel:'chrome'})});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto(process.env.VERIFY_URL||'http://127.0.0.1:3091',{waitUntil:'networkidle'});
+await page.screenshot({path:'/tmp/royz-ai-desktop.png',fullPage:true});
+await page.setViewportSize({width:390,height:844});
+await page.screenshot({path:'/tmp/royz-ai-mobile.png',fullPage:true});
+console.log(JSON.stringify({title:await page.title(),horizontalOverflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),errors}));
+await browser.close();

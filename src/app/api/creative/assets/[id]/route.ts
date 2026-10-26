@@ -1,0 +1,4 @@
+import {z} from 'zod';
+import {failure,isAdmin,json,rateLimit} from '@/lib/security';
+import {readCreativePNG} from '@/lib/creative-assets';
+export async function GET(req:Request,ctx:{params:Promise<{id:string}>}){try{const {id}=await ctx.params;if(!z.uuid().safeParse(id).success)return json({error:'File not found.'},404);const admin=await isAdmin();if(!admin&&!await rateLimit(req,'creative-asset-read',240))return json({error:'Please try again later.'},429);const file=await readCreativePNG(id,admin,new URL(req.url).searchParams.get('token')||'');if(!file)return json({error:'File not found.'},404);return new Response(file,{headers:{'Content-Type':'image/png','Content-Length':String(file.byteLength),'Content-Disposition':`inline; filename="${id}.png"`,'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"}});}catch(e){return failure(e);}}

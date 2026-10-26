@@ -1,0 +1,3 @@
+export interface Plan {summary:string;workflow:string;title?:string;estimatedHoursSaved:number;steps:string[];questions:string[];deliverables:string[];risks:string[]}
+export interface Assessment {id:string;token:string;name:string;email:string;business:string;website?:string;industry:string;teamSize:string; painPoint:string;hoursPerWeek:number;tools:string;details:string;status:string;notes?:string;scope?:string;createdAt:string;plan:Plan;billing?:{status:string}}
+export interface Prospect {id:string;business:string;website?:string;industry?:string;city?:string;contact?:string;notes?:string;sourceUrl?:string;status?:string}

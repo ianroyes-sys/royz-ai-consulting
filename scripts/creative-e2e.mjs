@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import {chromium} from '@playwright/test';
+import fs from 'node:fs/promises';
+
+const base=process.env.CREATIVE_TEST_URL||'http://127.0.0.1:3091';
+if(!base.startsWith('http://127.0.0.1:'))throw new Error('Use isolated local test server only.');
+await fs.mkdir('docs/creative/screenshots',{recursive:true});
+const browser=await chromium.launch({channel:'chrome',headless:true});
+const report={checks:[],errors:[]};
+try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ page.on('pageerror',e=>report.errors.push(e.message));
+ for(const url of ['/creative','/creative/start','/creative/demo','/creative/terms','/creative/privacy']){
+  assert.equal((await page.goto(base+url,{waitUntil:'networkidle'})).status(),200);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,url+' mobile overflow');
+  await page.setViewportSize({width:1440,height:1000});
+ }
+ report.checks.push('Five public routes load at desktop and mobile without overflow');
+ assert.equal((await page.request.get(base+'/api/creative/studio')).status(),401);
+ assert.equal((await page.request.post(base+'/api/creative/intake',{headers:{origin:'https://attacker.invalid'},data:{}})).status(),403);
+ report.checks.push('Unauthenticated owner request and foreign origin rejected');
+ await page.goto(base+'/creative/start');
+ await page.getByLabel('Your name',{exact:true}).fill('Creative QA');
+ await page.getByLabel('Email',{exact:true}).fill('creative-qa@example.com');
+ await page.getByLabel('Coffee brand',{exact:true}).fill('QA Coffee — synthetic test');
+ await page.getByLabel('What would you like us to create?').fill('One coffee SKU with three static ad concepts; use the approved fictional product image and exact copy.');
+ await page.getByLabel('Links to your brand and assets').fill('https://example.com/approved-coffee.png');
+ await page.getByRole('checkbox').check();
+ await page.getByRole('button',{name:'Save brief & open project'}).click();
+ await page.waitForURL('**/creative/client/*');
+ const token=new URL(page.url()).pathname.split('/').at(-1);
+ let client=await (await page.request.get(base+'/api/creative/client?token='+token)).json();
+ assert.equal(client.job.brand,'QA Coffee — synthetic test');assert.equal(client.job.canCheckout,false);
+ for(const field of ['email','notes','memory','audit','token','workflow'])assert.equal(client.job[field],undefined);
+ assert.equal((await page.request.post(base+'/api/creative/checkout',{headers:{origin:base},data:{token,scopeHash:client.job.scopeHash,consent:true}})).status(),409);
+ report.checks.push('Browser intake persists private client view; unapproved checkout blocked');
+ await page.goto(base+'/login?next=/creative/studio');
+ await page.getByLabel('Studio password').fill('creative-local-test-password');
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/creative/studio');
+ await page.getByRole('heading',{name:'Make good work. Keep clear promises.'}).waitFor();
+ let state=await (await page.request.get(base+'/api/creative/studio')).json();
+ let job=state.jobs.find(j=>j.token===token);assert.ok(job);
+ const headers={origin:base};
+ const patch=async(data,status=200)=>{const r=await page.request.patch(base+'/api/creative/studio',{headers,data});assert.equal(r.status(),status,await r.text());return r.json()};
+ await patch({id:job.id,action:'approve'},409);
+ const analysis={...job.analysis,missingAssets:[],rightsFlags:[],questionsForClient:[],exactText:'QA approved fictional text',decision:'accept'};
+ job=(await patch({id:job.id,action:'update',analysis,memory:{...job.memory,colors:'QA blue'},notes:'PRIVATE QA NOTE'})).job;
+ job=(await patch({id:job.id,action:'approve'})).job;
+ assert.equal(job.scopeApproved,true);await patch({id:job.id,action:'qa'},409);await patch({id:job.id,action:'deliver'},409);
+ client=await (await page.request.get(base+'/api/creative/client?token='+token)).json();assert.equal(client.job.canCheckout,true);assert.equal(client.job.notes,undefined);
+ report.checks.push('Missing-input, payment and delivery gates enforced; private owner data stays private');
+ const created=await page.request.post(base+'/api/creative/studio',{headers,data:{name:'Demo owner',email:'creative-demo@example.com',brand:'QA Demo — delete',brief:'Fictional demonstration of a full static creative project with exact provided assets.',references:['https://example.com/reference.png'],rightsConfirmed:true,demo:true}});assert.equal(created.status(),201);
+ let demo=(await created.json()).job;
+ demo=(await patch({id:demo.id,action:'update',analysis:{...demo.analysis,missingAssets:[],rightsFlags:[],decision:'accept'}})).job;
+ demo=(await patch({id:demo.id,action:'approve'})).job;
+ const guest=await browser.newContext();
+ const paths=['morning-ritual','product-focus','slow-moment'];
+ let firstURL;
+ for(let concept=1;concept<=3;concept++)for(const shape of ['square','portrait']){
+  const png=await fs.readFile(`public/creative/sample-pack/daybreak-${paths[concept-1]}-${shape}.png`);
+  const r=await page.request.post(base+`/api/creative/assets?jobId=${demo.id}&concept=${concept}`,{headers:{origin:base,'content-type':'image/png'},data:png});
+  assert.equal(r.status(),201,await r.text());const result=await r.json();demo=result.job;
+  assert.equal(result.output.width,1080);assert.equal(result.output.height,shape==='square'?1080:1350);
+  const url=base+result.output.url;firstURL ||= url;
+  const preview=await page.request.get(url);assert.equal(preview.status(),200);assert.deepEqual(await preview.body(),png);
+  assert.equal((await guest.request.get(url)).status(),404);
+  if(concept===1&&shape==='square')assert.equal((await page.request.post(base+`/api/creative/assets?jobId=${demo.id}&concept=2`,{headers:{origin:base,'content-type':'image/png'},data:png})).status(),409);
+ }
+ const outputs=demo.outputs.map(o=>({...o,brandApproved:true,textApproved:true,rightsApproved:true,humanApproved:true}));
+ report.checks.push('Six real PNG uploads inspected and privately stored; duplicate rejected and client access blocked before delivery');
+ demo=(await patch({id:demo.id,action:'update',outputs})).job;demo=(await patch({id:demo.id,action:'qa'})).job;assert.equal(demo.qa.passed,true);
+ demo=(await patch({id:demo.id,action:'deliver'})).job;assert.equal(demo.stage,'delivered');
+ const download=await guest.request.get(firstURL);assert.equal(download.status(),200);assert.equal(download.headers()['content-type'],'image/png');assert.match(download.headers()['cache-control'],/no-store/);assert.equal((await guest.request.get(firstURL.replace(/token=.*/, 'token=wrong'))).status(),404);await guest.close();report.checks.push('Approved client download succeeds; wrong token rejected');
+ await patch({id:demo.id,action:'update',notes:'Should be locked'},409);
+ demo=(await patch({id:demo.id,action:'revision',note:'Move headline clear of packaging',deliverable:'Concept 2 portrait',costCents:0})).job;
+ const revisionId=demo.revisions[0].id;
+ demo=(await patch({id:demo.id,action:'approve_revision',revisionId})).job;assert.equal(demo.qa.passed,false);
+ await patch({id:demo.id,action:'complete_revision',revisionId},409);
+ demo=(await patch({id:demo.id,action:'update',outputs})).job;
+ demo=(await patch({id:demo.id,action:'complete_revision',revisionId})).job;
+ demo=(await patch({id:demo.id,action:'deliver'})).job;
+ assert.ok(demo.audit.length>=9);
+ report.checks.push('Isolated simulated full workflow, final approval, audit history and revision re-QA verified');
+ await page.reload({waitUntil:'networkidle'});
+ for(const label of ['Brief','Decision','Workflow','Costs','Revisions','Client memory','Messages','Activity']){await page.getByRole('tab',{name:label,exact:true}).click();await page.getByRole('tabpanel',{name:label}).waitFor()}
+ await page.screenshot({path:'docs/creative/screenshots/studio-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'studio overflow');
+ await page.screenshot({path:'docs/creative/screenshots/studio-mobile.png',fullPage:true});
+ assert.deepEqual(report.errors,[]);report.checks.push('Owner tabs render, mobile studio fits, no browser JavaScript errors');
+ await fs.writeFile('docs/creative/e2e-results.json',JSON.stringify({...report,checkedAt:new Date().toISOString(),environment:'isolated local database',paidCalls:0},null,2));console.log(JSON.stringify(report));
+}finally{await browser.close()}

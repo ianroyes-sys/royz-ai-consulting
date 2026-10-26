@@ -1,0 +1,23 @@
+{
+  "reference": "DEMO-JOB-001",
+  "rawNotes": "Customer asked for a revised scope. Site access date has not been confirmed.",
+  "reportedFacts": [
+    "Customer requested revised scope"
+  ],
+  "unknownFacts": [
+    "Site access date",
+    "Price of revised scope"
+  ],
+  "tasks": [
+    {
+      "description": "Ask customer to confirm access date",
+      "owner": "Example office team",
+      "dueDate": null
+    },
+    {
+      "description": "Have estimator review revised scope",
+      "owner": null,
+      "dueDate": null
+    }
+  ]
+}

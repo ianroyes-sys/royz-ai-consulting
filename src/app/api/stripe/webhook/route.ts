@@ -1,0 +1,5 @@
+import {stripe,syncFromEvent} from '@/lib/billing';
+import {syncCreativeFromEvent} from '@/lib/creative-billing';
+import {db,init} from '@/lib/db';
+import {json} from '@/lib/security';
+export async function POST(req:Request){const signature=req.headers.get('stripe-signature');const secret=process.env.STRIPE_WEBHOOK_SECRET;if(!signature||!secret)return json({error:'Signature configuration required.'},400);let event;try{event=stripe().webhooks.constructEvent(await req.text(),signature,secret);}catch{return json({error:'Invalid signature.'},400);}try{await init();const prior=await db().execute({sql:'SELECT id FROM rmg_ai_events WHERE id=?',args:[event.id]});if(prior.rows.length)return json({received:true});await syncFromEvent(event);await syncCreativeFromEvent(event);await db().execute({sql:'INSERT OR IGNORE INTO rmg_ai_events(id,created_at) VALUES(?,?)',args:[event.id,new Date().toISOString()]});return json({received:true});}catch{return json({error:'Event processing failed; retry required.'},500);}}

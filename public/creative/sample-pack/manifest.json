@@ -1,0 +1,63 @@
+{
+  "brand": "Daybreak Coffee Studio \u2014 fictional",
+  "createdAt": "2026-09-24T01:57:42.730Z",
+  "clientWork": false,
+  "performanceData": null,
+  "sourceImage": "../demo-coffee.png",
+  "assets": [
+    {
+      "file": "daybreak-morning-ritual-square.png",
+      "source": "daybreak-morning-ritual-square.html",
+      "width": 1080,
+      "height": 1080,
+      "concept": "Ritual angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    },
+    {
+      "file": "daybreak-morning-ritual-portrait.png",
+      "source": "daybreak-morning-ritual-portrait.html",
+      "width": 1080,
+      "height": 1350,
+      "concept": "Ritual angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    },
+    {
+      "file": "daybreak-product-focus-square.png",
+      "source": "daybreak-product-focus-square.html",
+      "width": 1080,
+      "height": 1080,
+      "concept": "Product angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    },
+    {
+      "file": "daybreak-product-focus-portrait.png",
+      "source": "daybreak-product-focus-portrait.html",
+      "width": 1080,
+      "height": 1350,
+      "concept": "Product angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    },
+    {
+      "file": "daybreak-slow-moment-square.png",
+      "source": "daybreak-slow-moment-square.html",
+      "width": 1080,
+      "height": 1080,
+      "concept": "Occasion angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    },
+    {
+      "file": "daybreak-slow-moment-portrait.png",
+      "source": "daybreak-slow-moment-portrait.html",
+      "width": 1080,
+      "height": 1350,
+      "concept": "Occasion angle",
+      "qa": "Export dimensions verified; layout, copy and fictional labeling visually reviewed. Not client work.",
+      "fictional": true
+    }
+  ]
+}
